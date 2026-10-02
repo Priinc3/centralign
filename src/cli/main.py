@@ -543,7 +543,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--approve", nargs="?", const="", metavar="WHO",
                       help="sign off on the approval as WHO (non-interactive demo/CI)")
     demo.add_argument("--no-gate", action="store_true", help="skip the approval gate (shows what it protects)")
-    demo.add_argument("--llm", action="store_true", help="plan with the LLM if OPENAI_API_KEY is set")
+    demo.add_argument("--llm", action="store_true", help="plan with the LLM if a key is set (GEMINI_API_KEY, GROQ_API_KEY or OPENAI_API_KEY)")
     demo.add_argument("--json", action="store_true", help="print a machine-readable summary too")
     demo.set_defaults(func=cmd_demo)
 

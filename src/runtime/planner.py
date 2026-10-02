@@ -263,15 +263,89 @@ def intake_plan(task: str, manifests: Mapping[str, ToolManifest]) -> Plan | None
     )
 
 
-def heuristic_plan(task: str, manifests: Mapping[str, ToolManifest]) -> Plan:
-    """Offline planner: the templated intake flow, else keyword overlap with read-before-write order.
+# ------------------------------------------------------- read-side scenario templates
+# Two more jobs worth templating offline, both read-only: list an inbox and read what is in it, and
+# read the latest invoice without posting anything. Every argument is mined out of the ask — a
+# directory, a file name, a company — so nothing is invented, and neither plan can reach a write
+# tool, which is what makes "no approval, nothing posted" a property of the plan and not a promise.
+_INBOX_LIST = "files_list"
+_INBOX_PARSE = "invoice_parse"
+_INBOX_DIR_RE = re.compile(r"\b(seed/[\w./-]*?)/?(?=\s|$|[,.])")  # a sandbox-relative directory
+_INBOX_FILE_RE = re.compile(r"[\w-]+\.(?:pdf|txt)\b", re.IGNORECASE)
+_INBOX_GLOB = "*"
 
-    ponytail: template for the reference flow, keyword overlap + name-keyed arg filling for
-    everything else. A task outside that shape needs the LLM path (Phase 04 adds replan).
+
+def inbox_plan(task: str, manifests: Mapping[str, ToolManifest]) -> Plan | None:
+    """`list <dir> and parse <file>…` -> list that directory, then parse every file the ask names.
+
+    The parse paths are literals from the ask because `executor.resolve_refs` reads dicts, not list
+    indexes: a `files_list` result cannot feed an `invoice_parse` argument, so the files that get
+    read are the ones the ask named, and the listing is what proves they were there.
+    """
+    if _INBOX_LIST not in manifests or _INBOX_PARSE not in manifests:
+        return None
+    if _INTAKE_WRITE_RE.search(task):  # anything that writes is the intake flow's business
+        return None
+    directory = _INBOX_DIR_RE.search(task)
+    files = _INBOX_FILE_RE.findall(task)
+    if directory is None or not files:
+        return None
+    folder = directory.group(1)
+    steps = [Step(
+        id="s1",
+        tool=_INBOX_LIST,
+        args={"dir": folder, "pattern": _INBOX_GLOB},
+        intent=f"see what is in {folder}",
+        success_criterion=f"{folder} lists the files it holds",
+    )]
+    for i, name in enumerate(files, start=2):
+        steps.append(Step(
+            id=f"s{i}",
+            tool=_INBOX_PARSE,
+            args={"path": f"{folder}/{name}"},
+            depends_on=["s1"],
+            intent=f"read what is inside {name}",
+            success_criterion=f"{name} parses into an invoice",
+        ))
+    return Plan(goal=task, steps=steps)
+
+
+def check_plan(task: str, manifests: Mapping[str, ToolManifest]) -> Plan | None:
+    """`find the latest invoice for <company> …` with no write in the ask -> find it and stop.
+
+    One step, no post: the point of the scenario is that the same find the intake flow uses runs
+    alone, unattended, and the operator changes its plan because the ask changed — not because the
+    gate let it.
+    """
+    if _INTAKE_FIND not in manifests or _INTAKE_WRITE_RE.search(task):
+        return None
+    if not {"find", "latest"} <= _tokens(task):
+        return None
+    company = _company(task)  # omitted, never guessed, when the task names no company
+    if not company:
+        return None
+    return Plan(
+        goal=task,
+        steps=[Step(
+            id="s1",
+            tool=_INTAKE_FIND,
+            args={"company": company, "dir": _INTAKE_DIR, "pattern": _INTAKE_PATTERN},
+            intent=f"find the latest invoice for {company} and report it",
+            success_criterion="a parseable invoice for that company comes back",
+        )],
+    )
+
+
+def heuristic_plan(task: str, manifests: Mapping[str, ToolManifest]) -> Plan:
+    """Offline planner: the templated flows, else keyword overlap with read-before-write order.
+
+    ponytail: template for the three flows worth running offline (intake, inbox, read-only check),
+    keyword overlap + name-keyed arg filling for everything else. A task outside those shapes needs
+    the LLM path (Phase 04 adds replan).
     """
     if not task.strip():
         return Plan(goal=task)  # nothing was asked, so nothing is planned (verify blocks the run)
-    template = intake_plan(task, manifests)
+    template = intake_plan(task, manifests) or inbox_plan(task, manifests) or check_plan(task, manifests)
     if template is not None:
         return template
 
@@ -323,6 +397,8 @@ _SYSTEM = (
     "You are the planner of a contract-bound AI operator. Plan only; never execute. "
     "For the plan, emit exactly one tool call: submit_plan, using only tool names present in the manifest, "
     "the fewest steps that accomplish the goal, and depends_on forming a DAG. Leave every step's args empty. "
+    "Every step is exactly these keys and no others: id (s1, s2, …), tool, args, depends_on, "
+    "intent (one plain-words line), success_criterion (one observable line). "
     "When asked for one step's arguments, emit exactly one tool call to that step's tool with concrete values."
 )
 
@@ -391,6 +467,39 @@ def _step_args(
     return args
 
 
+# A planning step has no results yet — every tool call happens after the plan is built — so asking
+# a model for a *dependent* step's payload returns an invented invoice. These two names are the
+# exception: where to post and how to stay idempotent are the tool's business, never a record field.
+_NOT_FROM_RESULT = frozenset({"base_url", "idempotency_key"})
+# Manifest arg name -> field on the upstream record (`invoice_find_latest` calls it `due`, not
+# `due_date`). Names that match need no entry.
+_ARG_ALIASES = {"due_date": "due", "source_file": "file"}
+
+
+def _upstream_args(step: Step, manifests: Mapping[str, ToolManifest]) -> dict[str, Any]:
+    """Args for a write step that consumes a read step: read the values, never invent them.
+
+    Emits the same `{{dep.latest.field}}` refs the offline planner uses and `executor.resolve_refs`
+    already reads out of the dependency's own result, so a write can only post what a read found.
+
+    ponytail: refs assume the dependency's result carries one `latest` record — true of the intake
+    tools. Map a second result shape in when one shows up.
+    """
+    manifest = manifests[step.tool]
+    dep = step.depends_on[0]
+    props = manifest.parameters.get("properties", {})
+    args: dict[str, Any] = {}
+    for key in manifest.parameters.get("required") or []:
+        spec = props.get(key) or {}
+        if key in _NOT_FROM_RESULT:
+            args[key] = spec.get("default", "")  # blank: the tool fills its own default
+        elif spec.get("enum"):
+            args[key] = spec["enum"][0]
+        else:
+            args[key] = "{{%s.latest.%s}}" % (dep, _ARG_ALIASES.get(key, key))
+    return args
+
+
 def llm_plan(
     task: str,
     manifests: Mapping[str, ToolManifest],
@@ -440,10 +549,19 @@ def llm_plan(
         raise PlannerError(f"LLM invented tools not in the manifest: {unknown}")
 
     results: dict[str, Any] = {}
+    by_id = {s.id: s for s in plan.steps}
     for step in plan.topo_order():
         upstream = {d: results.get(d) for d in step.depends_on}
-        step.args = _step_args(
-            client, model, manifests[step.tool], goal=task, intent=step.intent, upstream=upstream
+        # Fed by a read step: the values come out of its result, not out of the model.
+        # Read steps are the exception: a parse after a list names its own file (the list result
+        # carries no `latest` record for a ref to resolve against), so only a write step takes refs.
+        fed_by_read = (bool(step.depends_on)
+                       and manifests[by_id[step.depends_on[0]].tool].risk == "read"
+                       and manifests[step.tool].risk != "read")
+        step.args = (
+            _upstream_args(step, manifests) if fed_by_read
+            else _step_args(client, model, manifests[step.tool], goal=task, intent=step.intent,
+                             upstream=upstream)
         )
         results[step.id] = step.args
     return plan
@@ -457,13 +575,20 @@ def make_plan(
     client: Any | None = None,
     memory: str = "",
 ) -> tuple[Plan, str]:
-    """Return (plan, source) where source is 'llm' | 'heuristic'. Never raises for the demo path."""
+    """Return (plan, source) where source is 'llm:<provider>/<model>' | 'heuristic'.
+
+    Never raises for the demo path. A plan that came off the wire is named as the model that
+    produced it, so 'llm:gemini/gemma-4-31b-it' and a shrug of 'llm' are distinguishable.
+    """
     if offline:
         return heuristic_plan(task, manifests), "heuristic"
     try:
-        return llm_plan(task, manifests, client=client, memory=memory), "llm"
+        plan = llm_plan(task, manifests, client=client, memory=memory)
     except Exception as exc:  # noqa: BLE001 - any LLM/transport failure degrades to offline
         return heuristic_plan(task, manifests), f"heuristic(fallback: {type(exc).__name__}: {exc})"
+    from ..llm.router import router  # noqa: PLC0415 - which endpoint served it is known only after the call
+    served = router().last_endpoint
+    return plan, f"llm:{served}" if served else "llm"
 
 
 def describe(plan: Plan) -> str:

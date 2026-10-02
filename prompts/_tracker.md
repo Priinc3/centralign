@@ -11,4 +11,9 @@
 | UAT | 07-user-acceptance | NORMAL | NEEDS-FIX (F3→05/FIX-2; F1 rotate key!) | 1🔴user 1🟠 | 05/FIX-2 |
 | SUBMIT | 08-submission | NORMAL | ✅ VERIFIED (packet consistent, USER: git+video+form) | — | done |
 | YOU | git push, video, form | USER | OPEN (~10 min: USER-STEPS.md) | — | — |
-| UI | 09-demo-ui | NORMAL | BUILD READY (localhost dashboard) | — | — |
+| UI | 09-demo-ui | NORMAL | ✅ VERIFIED (6 UI tests, 133 suite, localhost) | — | done |
+| INTERN | 10-intern | NORMAL | ✅ VERIFIED (Intern-first, close intact) | — | done |
+| VIDEO | 11-video-ui | NORMAL | ✅ VERIFIED (script shootable; UI story next) | — | done |
+| AI | 12-gemini-planning | NORMAL | ✅ VERIFIED (live llm:gemini plan, 154 suite) | F1 rotate key! | done |
+| UI2 | 13-ui-story | NORMAL | ✅ VERIFIED (stages+AI+3 scenarios, 156 suite) | F1 re-record video | done |
+| SYNC | 14-packet-sync | NORMAL | ✅ VERIFIED (156 everywhere, --llm honest) | F2 FIX-2 open | done |

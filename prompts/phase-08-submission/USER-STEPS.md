@@ -81,6 +81,7 @@ Fields to fill, with what goes in each — nothing here is invented, all of it i
 
 | form field | value / where to find it |
 |---|---|
+| **Role applied for** | **`AI Engineering Intern`** — tick this one. The packet is framed as the Intern submission (`SUBMISSION.md` line 3); the Founding Engineer role exists at the same company, but the prototype and this submission are the Intern scope. Only switch it if you change your mind about which role you are applying for. |
 | Repo URL | `https://github.com/Priinc3/centralign-operator` (step 1) |
 | Video URL | the unlisted link from step 2 |
 | One-line pitch | *"An AI operator that turns 'find the latest invoice from Company X and post it to the ERP' into a verified, approval-gated, evidenced completion — in 0.4s, offline, with no API key."* (`SUBMISSION.md` head) |
@@ -92,7 +93,10 @@ Fields to fill, with what goes in each — nothing here is invented, all of it i
 | LLM claim | `SUBMISSION.md` → *What the LLM path has actually been exercised on* — read it before writing anything about the model |
 
 If the form asks "what would you build next", README → *What is next* has the five items, already
-ranked, with the reason for each.
+ranked, with the reason for each. If it asks a role-specific question, answer it as the **Intern**
+applicant — engineering ability, speed of learning, experimentation, technical understanding (the
+intern discussion emphasis); the architecture/scalability/security framing is the Founding track,
+which is one optional line in the video close, not the submission's headline.
 
 ---
 

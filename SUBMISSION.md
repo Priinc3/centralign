@@ -1,91 +1,134 @@
 # SUBMISSION — CentrAlign AI operator
 
-**One-line:** an AI employee that turns *"find the latest invoice from Company X and post it to
-the ERP"* into a verified, evidenced, approval-gated completion — demonstrated in 0.4 seconds,
-offline, with no API key.
+Role: AI Engineering Intern (prototype also demonstrates Founding-scope architecture — see video close)
 
-- **Repo:** `GITHUB_URL: <fill after push>` — e.g. `https://github.com/<your-handle>/centralign`
-- **Video:** `VIDEO_URL: <fill after upload>` (unlisted link; 75–90s, beat sheet and record steps
-  in [`demo/video-script.md`](demo/video-script.md))
+**One-line:** an AI employee that turns *"find the latest invoice from Company X and post it to
+the ERP"* into a verified, evidenced, approval-gated completion — planned by a real model
+(`llm:groq/qwen/qwen3.8-27b`), `pass 8/8` and `9/9` on the invoice scenarios, with a deterministic
+offline fallback that says so on the badge when no key works.
+
+- **Repo:** https://github.com/Priinc3/centralign
+- **Video:** https://drive.google.com/file/d/1cgjTLso1PJflQ_-UQxXVWYsbXhDQq8hh/view?usp=sharing (beat sheet and record steps in [`demo/video-script.md`](demo/video-script.md))
 - **One command:** `bash demo/run.sh` → `verdict: pass 8/8 · ERP count: 1`
-- **Proof:** `python3 -m pytest tests/ -q` → 127 passed · `python3 -m src.security.scan` → 0 findings
+- **The page:** `python3 -m src.ui.app --port 0` — online-only, Run → Approve → Run again
+- **Proof:** `python3 -m pytest tests/ -q` → 163 passed · `python3 -m src.security.scan` → 0 findings
 
 ## The narrow-genuine statement
 
-> **Scope is one workflow — invoice intake for one company profile — executed for real, not
-> simulated.** Three seeded invoices are genuinely parsed, the newest one for *that company* is
+> **Scope is invoice work for one company profile across three scenarios — executed for real,
+> not simulated.** Seeded invoices are genuinely parsed, the newest one for *that company* is
 > genuinely selected (an invoice belonging to another company is present and ignored), the ERP
 > genuinely gains exactly one row over HTTP, and the approval genuinely blocks until a human
 > signs. Nothing on the demo path is a mock, stub or recorded fixture: there is no canned
-> response, and the only network is `127.0.0.1`. What is *not* done — other domains, other
-> systems, parallel execution, semantic recall — is listed in the README's Limits section rather
-> than faked. A generalization gap we found while writing this file is named there too: the
-> heuristic planner's find step globs `*.pdf`, so the seeded `.txt` invoice is never seen.
+> response, and the only network is `127.0.0.1` plus the model endpoint when a key is exported.
+> What is *not* done — other domains, other systems, parallel execution, semantic recall — is
+> listed in the README's Limits section rather than faked.
 
 ## Evaluation criteria → where to look, and what proves it
 
 | criterion | how the system meets it | proof an evaluator can run |
 |---|---|---|
-| **Autonomy** — determines and executes next actions without being told every step | The planner builds a DAG from the request plus the declared tool manifests; no step names are hardcoded in the CLI. A human is involved exactly once, at the money threshold, because the company policy says so | `bash demo/run.sh` — `run 1` finds + gates, `run 2` resumes and posts, no step was named by the operator |
-| **Execution** — actually performs work | `invoice_find_latest` parses files on disk; `erp_post_invoice` POSTs to a real HTTP server with a real sqlite DB | `ERP count: 1`; `cat runs/<id>/evidence.json` shows the tool args and the returned ERP row |
-| **Reliability** — unexpected states, errors, retries, failure | Append-only ledger, retry-with-backoff on retryable failures, replan on a failed sweep, checkpoint/resume, idempotency index so a re-run re-executes nothing | `bash demo/run.sh --append` → `replayed=2`, `ERP count: 1` (unchanged); `tests/test_reliability_offline.py` — retries, backoff, resume, replan |
-| **Verification** — did the outcome actually happen? | An independent verifier re-derives six gates plus one criterion per step **from the ledger rows**, not from the executor's return value; anything unresolved reads `blocked`, never `pass` | `verdict: pass 8/8` line; the 8 predicates are printed in `evidence.json`; `python3 -m src.cli.main run --task ""` → `blocked / No task given`, rc=1 |
-| **Generalization** — what survives a different task? | The runtime, gate, verifier, ledger, memory and evidence layers are domain-agnostic; company knowledge lives in versioned `context/*.yaml` (tools, allowlist, ceilings, PII rules) and in tools that satisfy the frozen `ToolManifest` contract | A new domain is a new `context/` profile + tool manifests; the empty-task case shows the loop refusing to fake a plan |
-| **Engineering Quality** — architecture, code, judgment | Frozen pydantic contracts, one chokepoint per trust boundary (`files_tool.safe_path`, `browser_tool.check_url`, `gate.decide`), stdlib-first, 5 pinned deps, contract-bound types instead of dicts, and a pre-publish security scan that fails CI | `python3 -m src.security.scan` → `findings: 0`; `python3 -m src.cli.main doctor` → one line per readiness check |
-| **Product Thinking** — focused on the user's actual objective | The system is graded on the user's outcome (invoice in the ERP), not on steps completed. `replayed=N` exists so a cached pass is never presented as an executed one; the CLI always ends with the next action, never a dead end | `ERP count: 1 (unchanged: nothing was double-posted)`; every blocked run prints the exact command that unblocks it |
-| **Technical Understanding** — why it is built this way | The design separates *planning* (model) from *execution and proof* (code); the verifier is deliberately given no access to the executor's conclusion; the ledger is append-only so a resumed run can never rewrite history | This file, the README's Decisions section, and the per-phase `REPORT.md`s under `prompts/` (each records raw command output, design choices and known ceilings) |
+| **Autonomy** — determines and executes next actions without being told every step | The model builds a DAG from the request plus the declared tool manifests (tools, order, dependencies, success criteria); no step names are hardcoded. A human is involved exactly once, at the money threshold, because the company policy says so | Page scenario 1 and 2, or `bash demo/run.sh` — `run 1` finds + gates, `run 2` resumes and posts, no step was named by the operator |
+| **Execution** — actually performs work | `invoice_find_latest` / `files_list` / `invoice_parse` read files on disk; `erp_post_invoice` POSTs to a real HTTP server with a real sqlite DB | `ERP count: 1`; `cat runs/<id>/evidence.json` shows the tool args and the returned ERP row |
+| **Reliability** — unexpected states, errors, retries, failure | Append-only ledger, multi-key rotation with cooldown/failover, retry-with-backoff on retryable failures, replan on a failed sweep, checkpoint/resume, idempotency index so a re-run re-executes nothing; any LLM failure degrades to the heuristic with the reason on the badge | `bash demo/run.sh --append` → `replayed=2`, `ERP count: 1` (unchanged); `tests/test_reliability_offline.py`, `tests/test_llm_router_keys.py` |
+| **Verification** — did the outcome actually happen? | An independent verifier re-derives six gates plus one criterion per step **from the ledger rows**, not from the executor's return value; anything unresolved reads `blocked`, never `pass` | `verdict: pass 8/8` / `pass 9/9`; predicates printed in `evidence.json`; `python3 -m src.cli.main run --task ""` → `blocked / No task given`, rc=1 |
+| **Generalization** — what survives a different task? | The runtime, gate, verifier, ledger, memory and evidence layers are domain-agnostic; company knowledge lives in versioned `context/*.yaml` and in tools satisfying the frozen `ToolManifest` contract. Scenario 2 and 3 run through the same loop with different tasks | Same commands, different scenario card; the empty-task case shows the loop refusing to fake a plan |
+| **Engineering Quality** — architecture, code, judgment | Frozen pydantic contracts, one chokepoint per trust boundary, stdlib-first, pinned deps, contract-bound types instead of dicts, per-provider LLM wire profiles with live-measured comments, and a pre-publish security scan | `python3 -m src.security.scan` → `findings: 0`; `python3 -m src.cli.main doctor`; per-phase `prompts/*/REPORT.md` record raw output and ceilings |
+| **Product Thinking** — focused on the user's actual objective | Graded on the user's outcome (invoice in the ERP), not steps completed. `replayed=N` separates cached passes from executed ones; the badge never shows a model that did not plan the run | `ERP count: 1 (unchanged: nothing was double-posted)`; fallback badge reads `model fallback: <reason>` |
+| **Technical Understanding** — why it is built this way | Planning (model) is separated from execution and proof (code); the verifier never reads the executor's conclusion; the ledger is append-only so a resumed run cannot rewrite history | This file, the README's Decisions section, and the per-phase `REPORT.md`s under `prompts/` |
 
 ## What the LLM path has actually been exercised on
 
-Evaluators should read the **Technical Understanding** row with this beside it, because "the model
-plans" is not the same claim as "the model was proven":
+"the model plans" is not the same claim as "the model was proven":
 
-- **Proven, and it is what you will see.** The deterministic heuristic planner runs the whole loop
-  offline — `verdict: pass 8/8`, no key, no network. This is the demo, the video, and the 127 tests.
-- **Proven live *and* in tests.** The multi-key router (`src/llm/router.py`): round-robin over every
-  key in the environment, 429 / 5xx / bad-key → cool that key and fail over to the next inside one
-  call, and no key material in any log or exception. Measured against the real Gemini endpoint with
-  a deliberately dead key first (400 `INVALID_ARGUMENT` → cooldown → next key OK) plus a live 429;
-  `tests/test_llm_router_keys.py` pins all of it offline.
-- **Falls back by design.** Gemini's OpenAI-compatible endpoint refuses this repo's *strict* plan
-  schema — measured live as `MALFORMED_FUNCTION_CALL`, `completion_tokens: 0`, with and without
-  `strict: true`, while a hand-built flat schema succeeded on the same key and model. So
-  `demo --llm` on Gemini ends `plan: heuristic(fallback: PlannerError: LLM returned no tool call)`
-  and still ends `pass 8/8`. The planner treats any contract violation as a fallback rather than
-  stripping `strict` to look better.
-- **Unexercised.** The OpenAI-key path — no `OPENAI_API_KEY` was ever run against the live endpoint,
-  so it carries no live evidence. Only the router code it shares is tested.
+- **Proven live, page, Groq.** `plan_source: llm:groq/qwen/qwen3.8-27b`, model-written intents,
+  scenario 1 `pass 8/8`, scenario 2 `pass 9/9`. Transcript + key scoreboard:
+  `prompts/phase-13-ui-story/REPORT.md` (postscripts).
+- **Proven live, CLI, Gemini.** `plan: llm:gemini/gemma-4-31b-it`, `finish_reason: tool_calls`,
+  `pass 8/8`. Transcript: `prompts/phase-12-gemini-planning/REPORT.md`.
+- **What it took, measured.** Gemini's compat endpoint rejects `title` keys (kept everything else);
+  Groq needs inlined `$defs`, no bare `required`, no `strict`, and `max_tokens: 800` (its on-demand
+  tier caps output at 1000/min); no Llama chat model exists on the account and gpt-oss flakes on
+  tool registration, so qwen is the default (`GROQ_MODEL` overrides). Router: round-robin,
+  429/5xx/bad-key → cooldown + failover inside one call, one in-place retry on a flaked tool call,
+  no key material in any log. Current key state: every Gemini key to hand is quota-spent (20/day),
+  so Gemini is first in line for after the reset and Groq serves today.
+- **Falls back by design.** No key, spent quota, 4xx, or a contract-violating plan →
+  `heuristic(fallback: <reason>)`, run still verdicts honestly. The page has no offline mode —
+  it always asks the model; the badge tells you what came back.
+- **Unexercised.** The OpenAI-key path — no live key, only shared router code tested.
 
 ## What a reviewer should run, in order
 
 ```bash
-bash demo/run.sh                      # the 30-second demo, offline, no key
+python3 -m src.ui.app --port 0       # the demo in a browser — open the URL it prints,
+                                      # pick a scenario, Run → Approve → done; ctrl-c stops it
+bash demo/run.sh                      # the same loop from the terminal, offline, no key
 bash demo/run.sh --append             # replay beat: nothing re-executes
 python3 -m src.cli.main doctor        # readiness, exit 0
-python3 -m src.cli.main run --task "find latest invoice from Company X and post it to the ERP" \
-        --runs /tmp/x/runs --queue /tmp/x/gate.jsonl   # same loop, no demo script, waits for a human
-python3 -m src.reliability.hitl --pending        # the approval queue a human sees
-python3 -m pytest tests/ -q           # 127 tests
+python3 -m pytest tests/ -q           # 163 tests
 python3 -m src.security.scan          # 0 findings
 ```
 
-The `run` line above stops at `blocked / 7/8` with `ERP count: 0` — that is the gate working,
-not a broken command. It prints the exact `--approve` line to continue.
+With a key exported (`GEMINI_API_KEY`, `GROQ_API_KEY` or `OPENAI_API_KEY`), the page and
+`bash demo/run.sh /tmp/x --llm` plan with the model and the badge/verdict line names it.
 
-## Honest limits (not hiding these)
+## Architecture (short)
 
-Single workflow and single company profile; pattern-based redaction rather than DLP; the
-verifier checks eight ledger-derivable properties and cannot judge business correctness; BM25
-recall with no embeddings; serial step execution; approval requests keyed on
-`(tool, amount, domain)`; one replan shape; the demo's approval is unattended sign-off by
-name. Full list with rationale: **README → Limits**.
+Strict tool-calling planner (submit_plan, then per-step args) → executor (manifest dispatch,
+ref resolution, approval gate) → verifier (ledger-derived predicates) → evidence bundle.
+Multi-key LLM router underneath; deterministic heuristic fallback beside it. Full diagram +
+stage table: **README → Architecture**.
+
+## Important design decisions
+
+1. **The model plans; code executes and proves.** The verifier never reads the executor's
+   conclusion — it re-derives pass/fail from ledger rows.
+2. **Deny by default** at the gate, the browser allowlist, and the filesystem sandbox.
+3. **Append-only ledger**, so resume is a new run and evidence is always coherent history.
+4. **Idempotency index**, so `replayed=N` separates cached passes from executed ones.
+5. **Approvals are people in the audit trail** (`$4,820 > $1,000` unattended limit).
+6. **Per-provider wire profiles** in the router (title-strip, def-inline, token cap) — each with
+   the live measurement that forced it, in comments.
+7. **Refs only where the shape holds**: a write step takes `{{dep.latest.*}}`; a read step
+   after a list names its own file (scenario-2 postscript).
+
+## Known limitations
+
+Single workflow family, one company profile; pattern-based (not DLP) redaction; the verifier
+judges ledger-derivable properties, not business correctness; keyword memory, no embeddings;
+serial steps; one replan shape; sim ERP; free-tier quotas on every model path. Full list:
+**README → Limits**.
+
+## What I would build next (2 weeks)
+
+Real ERP connector first (the tool already speaks HTTP); mid-run replan-on-failure instead of
+degrade-to-fallback; Groq structured outputs + a local-model option to escape free-tier physics;
+persistent company memory across runs. Full reasoning: README → What is next.
+
+## Assumptions
+
+Invoice intake is the vertical; company context is human-edited versioned YAML; one SQLite
+writer, WAL, ledger = source of truth; `127.0.0.1` trusted, rest allowlisted; humans reachable
+synchronously for approvals. Full list: **README → Assumptions**.
+
+## Models, APIs, frameworks, components
+
+Planner: `qwen/qwen3.8-27b` via Groq, Gemini first in line (`gemma-4-31b-it`, `gemini-3.8-flash`)
+— all through the OpenAI Python SDK against OpenAI-compatible endpoints. Contracts: pydantic.
+UI: stdlib `http.server` + one HTML file, no build step. Suite: pytest (163, offline, no key).
+AI coding tools used: OpenCode, powered by Muse Spark — the per-phase `prompts/*/REPORT.md`
+files record what was built, measured, and deliberately skipped. No other pre-built agent
+frameworks; executor, verifier, router, ERP sim are custom code in this repo.
 
 ## Deliverables checklist
 
-- [ ] GitHub/source link — `GITHUB_URL: <fill after push>` (not yet real; see **USER-STEPS.md**)
-- [x] README with setup + run instructions (`bash demo/run.sh`, `pytest`, `doctor`, `scan`)
-- [x] Architecture explanation (README diagram + table; per-phase `prompts/*/REPORT.md`)
+- [x] GitHub/source link — https://github.com/Priinc3/centralign
+- [x] README with setup + run instructions
+- [x] Architecture explanation (README + per-phase `prompts/*/REPORT.md`)
+- [x] Technical/design decisions (README + this file)
 - [x] Working prototype, genuinely executed, not mocked
 - [x] Evidence returned per run (`runs/<id>/evidence.json`, `events.jsonl`, `state.json`)
-- [ ] Video — `VIDEO_URL: <fill after upload>` (script + recording steps in
-      [`demo/video-script.md`](demo/video-script.md); not yet recorded)
+- [x] Known limitations, next steps, assumptions, models/APIs (README + this file)
+- [x] Video — https://drive.google.com/file/d/1cgjTLso1PJflQ_-UQxXVWYsbXhDQq8hh/view?usp=sharing (script + recording steps in
+      [`demo/video-script.md`](demo/video-script.md))

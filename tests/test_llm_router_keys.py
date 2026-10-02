@@ -22,6 +22,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from src.llm.router import (  # noqa: E402
     GEMINI_BASE_URL,
+    GROQ_BASE_URL,
+    SCHEMA_GROQ,
+    _profile_tool,
     Endpoint,
     LlmError,
     Router,
@@ -88,6 +91,72 @@ def test_keys_are_read_from_the_environment_in_numeric_order():
     assert found[-1].base_url is None and found[-1].key == "openai-2"
 
 
+def test_groq_keys_slot_between_gemini_and_openai():
+    found = endpoints({"OPENAI_API_KEY": "o-1", "GROQ_API_KEY": "g-1", "GEMINI_API_KEY": "k-1"})
+    assert [ep.label for ep in found] == ["gemini#1", "groq#1", "openai#1"]
+    assert found[1].base_url == GROQ_BASE_URL and found[1].key == "g-1"
+    log: list[dict] = []
+    r = make_router({"GEMINI_API_KEY": "k-1", "GROQ_API_KEY": "g-1"},
+                    {"gemini#1": [Boom(503)]}, log=log)
+    assert r.chat.completions.create() == {"ok": True}
+    assert [c["key"] for c in log] == ["gemini#1", "groq#1"]  # 503 fails over onto groq
+    assert found[1].max_tokens == 800 and found[0].max_tokens is None
+
+
+def test_groq_calls_carry_a_max_tokens_cap_and_gemini_calls_do_not():
+    # Measured live: qwen's on-demand tier allows 1000 output tokens/min and answers 429 before
+    # asking the model when the estimate hits 1196. The cap rides setdefault: an explicit caller
+    # value always wins.
+    seen: list[dict] = []
+
+    def factory(ep: Endpoint):
+        class Fake:
+            def __init__(self) -> None:
+                self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=self._create))
+
+            def _create(self, **kwargs):
+                seen.append({"key": ep.label, "max_tokens": kwargs.get("max_tokens")})
+                return {"ok": True}
+
+        return Fake()
+
+    r = Router(endpoints({"GEMINI_API_KEY": "k-1", "GROQ_API_KEY": "g-1"}), factory=factory,
+               policy=RetryPolicy(sleeper=lambda _s: None), clock=lambda: 0.0)
+    r.chat.completions.create()
+    r.chat.completions.create()
+    assert [(c["key"], c["max_tokens"]) for c in seen] == [("gemini#1", None), ("groq#1", 800)]
+
+
+def test_groq_profile_drops_required_where_properties_is_empty():
+    # Measured live, three Groq rejections fixed in one profile: `$defs`/`$ref` (the tool never
+    # registers), `required` on the pinned-empty `args` (400), `"strict": true` (same refusal as
+    # the unregistered tool). The local contract still validates against the untouched schema.
+    from src.runtime.planner import _plan_submit_tool  # noqa: E402 - heavy import, this test only
+
+    fn = _profile_tool(_plan_submit_tool(), SCHEMA_GROQ)["function"]
+    assert "strict" not in fn
+    wired = fn["parameters"]
+    blob = json.dumps(wired)
+    assert "$defs" not in blob and "$ref" not in blob
+    bare: list[str] = []
+
+    def walk(node, path="$"):
+        if isinstance(node, dict):
+            if "required" in node and not node.get("properties"):
+                bare.append(path)
+            for k, v in node.items():
+                walk(v, f"{path}.{k}")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{path}[{i}]")
+
+    walk(wired)
+    assert bare == []
+    step = wired["properties"]["steps"]["items"]["properties"]
+    assert step["args"]["properties"] == {}  # still pinned empty: the model still leaves args alone
+    assert step["id"] and step["tool"] and step["intent"]  # the step survived the inlining intact
+
+
 def test_round_robin_spans_every_key_across_calls():
     log: list[dict] = []
     r = make_router(THREE_KEYS, log=log)
@@ -126,6 +195,19 @@ def test_5xx_also_fails_over_and_a_key_stays_out_while_it_cools():
     assert r.cooling("gemini#1") > 0
     clock.t = 1000.0
     assert r.cooling("gemini#1") == 0  # usable again once the cooldown lapses
+
+
+def test_tool_use_failed_is_retried_in_place_not_failed_over():
+    # Measured live on Groq: the byte-identical request serves minutes after a
+    # `tool_use_failed` refusal, so the generation flaked, not the request. One same-key retry;
+    # a plain bad-schema 400 (no marker) stays fatal, covered by test_400_is_fatal above.
+    log: list[dict] = []
+    flake = Boom(400, "tool_use_failed: attempted to call tool 'submit_plan' which was not in "
+                      "request.tools; failed_generation: {...}")
+    r = make_router({"GROQ_API_KEY": "g-1"}, {"groq#1": [flake, {"ok": True}]}, log=log)
+    assert r.chat.completions.create() == {"ok": True}
+    assert [c["key"] for c in log] == ["groq#1", "groq#1"]  # same key twice, no failover
+    assert r.cooling("groq#1") == 0  # a flake does not condemn the key
 
 
 def test_all_keys_failing_raises_and_names_no_key_material():

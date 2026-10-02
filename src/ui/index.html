@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CentrAlign · invoice intake demo</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171c22; --line: #262d36; --ink: #e6ebf1; --dim: #8d99a6;
+    --go: #4ec9a6; --warn: #e0b341; --bad: #e06c75; --accent: #6aa9ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.5;
+         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 28px 20px 56px; }
+  header { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { font-size: 19px; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); font-size: 13px; }
+  .grow { flex: 1; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
+           background: #20272f; color: var(--ink); padding: 9px 16px; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  #run { background: var(--accent); border-color: var(--accent); color: #0b1017; font-weight: 600; }
+  #approve { background: var(--go); border-color: var(--go); color: #0b1017; font-weight: 600; }
+  .task { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+          color: var(--dim); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+          background: var(--panel); }
+  .banner { margin: 14px 0; padding: 16px 18px; border-radius: 10px; border: 1px solid var(--line);
+            background: var(--panel); font-size: 24px; font-weight: 650; letter-spacing: -0.02em;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .banner.pass { color: var(--go); border-color: #2c5c4d; }
+  .banner.blocked { color: var(--warn); border-color: #5c4c22; }
+  .banner.fail { color: var(--bad); border-color: #5c2f33; }
+  .banner.idle { color: var(--dim); font-size: 17px; font-weight: 500; }
+
+  /* how it works — the same eight stages every run, lit as the run reaches them */
+  ol.stages { list-style: none; display: flex; flex-wrap: wrap; margin: 0; padding: 0; }
+  ol.stages li { display: flex; align-items: center; }
+  ol.stages .chip { border: 1px solid var(--line); background: #12171d; border-radius: 999px;
+                    padding: 3px 10px; font-size: 11.5px; text-transform: uppercase;
+                    letter-spacing: .05em; color: var(--dim); white-space: nowrap; }
+  ol.stages li.on .chip { color: #0b1017; background: var(--accent); border-color: var(--accent);
+                          font-weight: 650; }
+  ol.stages li.done .chip { color: var(--ink); border-color: #38507a; }
+  ol.stages .arrow { color: var(--line); padding: 0 5px; font-size: 12px; }
+
+  /* the gallery: what each job will run, stated before you click it */
+  .jobs { display: grid; gap: 10px; grid-template-columns: 1fr; margin-bottom: 14px; }
+  @media (min-width: 760px) { .jobs { grid-template-columns: repeat(3, 1fr); } }
+  .job { display: block; text-align: left; background: var(--panel); padding: 11px 13px; }
+  .job.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .job b { display: block; font-size: 14px; }
+  .job .chain { display: block; margin-top: 5px; font-size: 12.5px; color: var(--dim); }
+  .job .gate { display: block; margin-top: 7px; font-size: 11.5px; color: var(--warn); }
+  .job.read .gate { color: var(--go); }
+
+  .grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 760px) { .grid { grid-template-columns: 1.35fr 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+       margin: 0 0 10px; font-weight: 600; }
+  h2.split { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+  ol.steps { list-style: none; margin: 0; padding: 0; }
+  ol.steps li { display: grid; grid-template-columns: 20px 1fr; gap: 8px; padding: 7px 0;
+                border-top: 1px solid var(--line); }
+  ol.steps li:first-child { border-top: 0; }
+  .icon { font-family: ui-monospace, monospace; font-weight: 700; }
+  .s-succeeded { color: var(--go); } .s-cached { color: var(--accent); }
+  .s-failed { color: var(--bad); } .s-skipped { color: var(--warn); }
+  .tool { font-family: ui-monospace, monospace; font-size: 13px; }
+  .why { color: var(--dim); font-size: 13px; overflow-wrap: anywhere; }
+  .empty { color: var(--dim); font-style: italic; }
+  .card { border: 1px solid #5c4c22; border-radius: 10px; padding: 12px; background: #1d1a12; }
+  .card p { margin: 6px 0 10px; font-size: 13px; color: #d8cda8; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input { font: inherit; background: #12171d; color: var(--ink); border: 1px solid var(--line);
+          border-radius: 8px; padding: 8px 10px; min-width: 140px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 13px; }
+  dt { color: var(--dim); }
+  dd { margin: 0; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+  details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+  pre { margin: 10px 0 0; max-height: 320px; overflow: auto; background: #0c1015; border: 1px solid var(--line);
+        border-radius: 8px; padding: 10px; font-size: 12px; overflow-wrap: anywhere; }
+  .badge { display: inline-block; font-family: ui-monospace, monospace; font-size: 12px;
+           border: 1px solid var(--line); background: #12171d; border-radius: 6px; padding: 3px 8px; }
+  .badge.llm { color: var(--accent); border-color: #2c4a7c; }
+  .badge.fallback { color: var(--warn); border-color: #5c4c22; }
+  ol.plan { list-style: none; margin: 10px 0 0; padding: 0; }
+  ol.plan li { border-top: 1px solid var(--line); padding: 7px 0; }
+  ol.plan li:first-child { border-top: 0; }
+  footer { margin-top: 18px; color: var(--dim); font-size: 12px; }
+  footer code { overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="grow">
+      <h1>CentrAlign · an AI employee for invoice intake</h1>
+      <div class="sub">It reads the ask, plans the work, stops for a human before anything spends money,
+        then verifies the result from the ledger and hands you the evidence.</div>
+    </div>
+  </header>
+
+  <section>
+    <h2>How it works · the same eight stages every run</h2>
+    <ol class="stages" id="stages"></ol>
+  </section>
+
+  <h2 style="margin-top:22px">Pick a job</h2>
+  <div class="jobs" id="jobs"></div>
+
+  <div class="task" id="task">…</div>
+  <div class="row" style="margin-top:10px"><button id="run">Run the task</button></div>
+  <div class="banner idle" id="banner">loading…</div>
+
+  <div class="grid">
+    <section>
+      <h2>Steps <span id="count"></span></h2>
+      <ol class="steps" id="steps"></ol>
+      <h2 class="split">ERP row</h2>
+      <div id="erp" class="why">nothing posted yet</div>
+    </section>
+
+    <section>
+      <h2>The plan</h2>
+      <div id="ai"><div class="empty">the plan shows up here the moment the planner returns one</div></div>
+      <h2 class="split">Human in the loop</h2>
+      <div id="approval"><div class="empty">no approval is waiting</div></div>
+      <h2 class="split">Evidence</h2>
+      <div id="evidence"><div class="empty">written when the run finishes</div></div>
+    </section>
+  </div>
+
+  <footer>
+    run <code id="runid">—</code> · sim ERP <code id="erpurl">—</code> · scratch <code id="scratch">—</code>
+    <span id="err"></span>
+  </footer>
+</main>
+
+<script>
+// Vanilla fetch + polling: no framework, no build step, and it works with the server offline.
+const GLYPH = { succeeded: "✓", cached: "↻", skipped: "⏸", failed: "✗" };
+const LABEL = { succeeded: "done", cached: "replayed from the ledger (not called again)",
+                skipped: "skipped", failed: "failed" };
+const STAGES = ["goal", "understand", "plan", "execute", "observe", "adapt", "verify", "complete"];
+const $ = (id) => document.getElementById(id);
+let busy = false;
+
+function node(tag, text, cls) {
+  const el = document.createElement(tag);
+  if (text !== undefined && text !== null) el.textContent = text;
+  if (cls) el.className = cls;
+  return el;
+}
+
+function money(value) {
+  return value === null || value === undefined ? ""
+    : "$" + Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function post(path, body) {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify(body || {}) });
+  return { ok: res.ok, data: await res.json() };
+}
+
+// The strip is the loop's own stage list. `reached` is the trail the run wrote into the ledger,
+// so a stage is lit only once the run has actually been there; the last one is where it is now.
+function buildStages() {
+  const list = $("stages");
+  if (list.childElementCount) return;
+  STAGES.forEach((name, i) => {
+    const li = node("li");
+    li.dataset.stage = name;
+    li.append(node("span", name, "chip"));
+    if (i < STAGES.length - 1) li.append(node("span", "→", "arrow"));
+    list.append(li);
+  });
+}
+
+function renderStages(reached) {
+  buildStages();
+  const live = (reached || []).slice(-1)[0] || "";
+  for (const li of $("stages").children) {
+    li.classList.toggle("on", li.dataset.stage === live);
+    li.classList.toggle("done", reached.includes(li.dataset.stage) && li.dataset.stage !== live);
+  }
+}
+
+// One card per job, saying the tool chain and the gate in plain words before you click it.
+function buildJobs(scenarios) {
+  const box = $("jobs");
+  if (box.childElementCount) return;
+  for (const sc of scenarios) {
+    const card = node("button", null, `job${sc.gate.startsWith("read-only") ? " read" : ""}`);
+    card.dataset.id = sc.id;
+    card.append(node("b", sc.title), node("span", sc.chain, "chain"), node("span", sc.gate, "gate"));
+    card.onclick = async () => { await post("/api/scenario", { id: sc.id }); await poll(); };
+    box.append(card);
+  }
+}
+
+function renderJobs(state) {
+  buildJobs(state.scenarios || []);
+  const locked = busy || state.phase === "running" || state.phase === "awaiting";
+  for (const card of $("jobs").children) {
+    card.classList.toggle("on", card.dataset.id === state.scenario);
+    card.disabled = locked;
+  }
+}
+
+// The badge is the run's own `plan_source` and nothing else: an LLM plan names the model that wrote
+// it, a fallback says why the model was not used, and plain `heuristic` says no model was asked.
+function plannerBadge(source) {
+  if (!source) return ["planning…", ""];
+  if (source.startsWith("llm:")) return [`llm · ${source.slice(4)}`, "llm"];
+  const fallback = source.match(/^heuristic\(fallback: (.*)\)$/);
+  if (fallback) return [`model fallback: ${fallback[1]}, deterministic planner used`, "fallback"];
+  return ["heuristic offline", ""];
+}
+
+function renderAi(state) {
+  const box = $("ai");
+  box.replaceChildren();
+  const [label, cls] = plannerBadge(state.plan_source);
+  box.append(node("div", label, `badge ${cls}`));
+  const steps = (state.plan || {}).steps || [];
+  if (!steps.length) {
+    box.append(node("div", "the plan shows up here the moment the planner returns one", "empty"));
+    return;
+  }
+  box.append(node("div", `goal: ${(state.plan || {}).goal || state.task}`, "why"));
+  const list = node("ol", null, "plan");
+  for (const step of steps) {
+    const li = node("li");
+    li.append(node("div", `${step.id} · ${step.tool}`, "tool"));
+    if (step.intent) li.append(node("div", step.intent, "why"));
+    if (step.success_criterion) li.append(node("div", `done when: ${step.success_criterion}`, "why"));
+    list.append(li);
+  }
+  box.append(list);
+}
+
+function renderSteps(steps) {
+  const list = $("steps");
+  list.replaceChildren();
+  $("count").textContent = steps.length ? `(${steps.length})` : "";
+  if (!steps.length) { list.append(node("li", "no steps yet — press Run", "empty")); return; }
+  for (const step of steps) {
+    const li = node("li");
+    li.append(node("span", GLYPH[step.status] || "·", `icon s-${step.status}`));
+    const body = node("div");
+    body.append(node("div", `${step.step_id} · ${step.tool}`, "tool"));
+    // A replayed row quotes the payload of the run that really called the tool, so say so first.
+    const why = step.status === "cached" ? `${LABEL.cached} · ${step.detail}`
+              : (step.detail || LABEL[step.status] || step.status);
+    if (why) body.append(node("div", why, "why"));
+    li.append(body);
+    list.append(li);
+  }
+}
+
+function renderApproval(pending) {
+  const box = $("approval");
+  box.replaceChildren();
+  if (!pending.length) { box.append(node("div", "no approval is waiting", "empty")); return; }
+  for (const rec of pending) {
+    const card = node("div", null, "card");
+    card.append(node("div", `${rec.tool} · ${money(rec.amount)} ${rec.reason || "policy requires a human"}`, "tool"));
+    card.append(node("p", `Request ${rec.request_id} is queued. Nothing is posted until someone presses Approve — `
+                       + `the decision is written to the audit trail with their name.`));
+    const row = node("div", null, "row");
+    const who = node("input");
+    who.placeholder = "your name";
+    const approve = node("button", "Approve", null);
+    approve.id = "approve";
+    approve.onclick = async () => {
+      approve.disabled = true;
+      const { data } = await post("/api/approve", { request_id: rec.request_id, approver: who.value });
+      if (data.error) { approve.disabled = false; $("err").textContent = " · " + data.error; }
+      await poll();
+    };
+    row.append(who, approve);
+    card.append(row);
+    box.append(card);
+  }
+}
+
+function renderEvidence(state) {
+  const box = $("evidence");
+  box.replaceChildren();
+  if (!state.evidence) { box.append(node("div", "written when the run finishes", "empty")); return; }
+  const v = state.evidence.verdict || {};
+  const t = state.evidence.totals || {};
+  const dl = node("dl");
+  for (const [k, val] of [["file", state.evidence_path], ["planner", state.plan_source],
+                          ["events", t.events],
+                          ["tools executed", (t.tools_actually_executed || []).join(", ") || "none"],
+                          ["tools replayed", (t.tools_replayed || []).join(", ") || "none"],
+                          ["predicates", `${(v.predicates || []).filter((p) => p.passed).length}/`
+                                          + `${(v.predicates || []).length} passed`]]) {
+    dl.append(node("dt", k), node("dd", String(val)));
+  }
+  box.append(dl);
+  const details = node("details");
+  details.append(node("summary", "evidence.json (the whole bundle)"));
+  details.append(node("pre", JSON.stringify(state.evidence, null, 2)));
+  box.append(details);
+}
+
+function renderErp(erp) {
+  const box = $("erp");
+  box.replaceChildren();
+  if (!erp) { box.append(node("div", "the sim ERP is not answering", "empty")); return; }
+  box.append(node("div", `${erp.count} row${erp.count === 1 ? "" : "s"} in the ERP`));
+  if (erp.row) {
+    const dl = node("dl");
+    dl.style.marginTop = "6px";
+    for (const [k, val] of [["id", erp.row.id], ["vendor", erp.row.vendor],
+                            ["invoice", erp.row.invoice_number], ["amount", erp.row.amount],
+                            ["due", erp.row.due_date], ["from", erp.row.source_file]]) {
+      dl.append(node("dt", k), node("dd", String(val)));
+    }
+    box.append(dl);
+  }
+}
+
+function render(state) {
+  const replayed = state.steps.filter((s) => s.status === "cached").length;
+  $("task").textContent = state.task;
+  const verdict = state.verdict || {};
+  const preds = verdict.predicates || [];
+  const passed = preds.filter((p) => p.passed).length;
+  const banner = $("banner");
+  banner.className = `banner ${state.done ? (verdict.status || "blocked") : "idle"}`;
+  banner.textContent = !state.done
+    ? (state.run_id ? `${state.phase_text}…` : state.phase_text)
+    : state.error ? "run stopped — see below"
+    : verdict.status === "pass" ? `pass ${passed}/${preds.length}   replayed=${replayed}`
+    : verdict.status === "blocked" ? `blocked / ${verdict.summary || "waiting on a human"}`
+    : `fail ${passed}/${preds.length}`;
+  $("run").disabled = busy || state.phase === "running" || state.phase === "awaiting";
+  $("run").textContent = state.clicks ? `Run again (run ${state.clicks + 1})` : "Run the task";
+  renderStages(state.stages || []);
+  renderJobs(state);
+  renderSteps(state.steps);
+  renderAi(state);
+  renderApproval(state.pending || []);
+  renderEvidence(state);
+  renderErp(state.erp);
+  $("runid").textContent = state.run_id || "—";
+  $("erpurl").textContent = state.erp_url || "—";
+  $("scratch").textContent = state.scratch || "—";
+  $("err").textContent = state.error ? " · " + state.error : "";
+}
+
+$("run").onclick = async () => {
+  busy = true;
+  $("run").disabled = true;
+  await post("/api/run");
+  busy = false;
+  await poll();  // render now, not up to 500ms later: a fast run would otherwise land in one frame
+};
+
+let timer = 0;
+function schedule(s) {
+// ponytail: poll fast only while the server is working; anything waiting on you moves on your click
+  clearTimeout(timer);
+  if (s && s.phase === "running") timer = setTimeout(poll, 500);
+}
+async function poll() {
+  if (document.hidden) return;
+  const res = await fetch("/api/state");
+  const s = await res.json();
+  render(s);
+  schedule(s);
+}
+poll();
+document.onvisibilitychange = () => { if (!document.hidden) poll(); };
+</script>
+</body>
+</html>

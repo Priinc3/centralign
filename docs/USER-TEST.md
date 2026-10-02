@@ -15,7 +15,7 @@ paste the output line into the demo video or the submission form — that is the
 | thing | key needed? | what happens without it |
 |---|---|---|
 | steps 1–12 below | **none** | — |
-| live LLM planning (step 13, optional) | `GEMINI_API_KEY`, optionally `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3`, … or `OPENAI_API_KEY` | the planner uses its deterministic offline plan and the run continues |
+| live LLM planning (step 13, optional) | `GEMINI_API_KEY`, optionally `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3`, … or `OPENAI_API_KEY` | the planner uses its deterministic offline plan (`plan: heuristic`), the run continues and still passes 8/8 — with `--llm` it also names the reason it fell back |
 | step 10, the browser | `pip install playwright` (free, no key) | the browser check says `SKIP` and exits 0 |
 
 No other API is called anywhere. There is no cloud service, no signup, no company account.
@@ -364,15 +364,16 @@ python3 -m pytest tests/ -q
 **Expect**
 
 ```
-127 passed, 1 skipped in 7.30s
+163 passed, 1 skipped in 15.32s
 ```
 
-It takes about 7 seconds and makes **no network calls and needs no key**. The one skip is the
-browser test, which needs playwright (step 10). On a machine without the pinned
-`requirements.txt` you may instead see the collection error about missing `openai`/`pydantic` —
+It takes about 16 seconds and makes **no network calls and needs no key**. The one skip is the
+browser test, which needs playwright (step 10). The count is the part that must match; the seconds
+are one measured run on a laptop and move a second or two either way. On a machine without the
+pinned `requirements.txt` you may instead see the collection error about missing `openai`/`pydantic` —
 run the pip line above.
 
-- [ ] step 9: `127 passed, 1 skipped`, no key exported
+- [ ] step 9: `163 passed, 1 skipped`, no key exported
 
 ---
 
@@ -505,8 +506,8 @@ the demo is interactive, and `doctor` failing on camera is a good 10 seconds.
 
 ## Step 13 (OPTIONAL) — the live LLM path, with a key
 
-**Needs at least one key. Skip this step entirely if you have none** — steps 1–12 already
-proved everything the system claims.
+**Needs at least one key. Skip this step entirely if you have none** — steps 1–12 already proved
+everything the system claims *except* live model planning, which only a key can show.
 
 Get a key at <https://aistudio.google.com/apikey> (free tier, no card). Then export it **in your
 shell only** — never write it into the repo, never commit it, never paste it into a file:
@@ -514,15 +515,38 @@ shell only** — never write it into the repo, never commit it, never paste it i
 ```bash
 export GEMINI_API_KEY='…'                 # one key
 export GEMINI_API_KEY_2='…'               # optional: a second key for rotation
-export GEMINI_MODEL='gemini-2.5-flash'    # optional, this is the default
+export GEMINI_MODEL='gemini-2.5-flash'    # optional: the default is gemma-4-31b-it, which is
+                                          # much slower — see the timing note before you start
 bash demo/run.sh /tmp/llm --llm
 ```
 
-**Expect** the same demo, with the plan source naming the router:
+**This step asks a real model, not a stub.** With a key present the planner sends the tool manifest
+to the endpoint, the endpoint returns a tool call, and the run executes the model's plan: it chooses
+the tools, their order, the dependency between them and the success criteria.
+
+**Expect** the same demo, with the plan source naming the provider *and the model that answered*:
 
 ```
-verdict: pass 8/8   replayed=1   plan: llm   run: <run_id>
+verdict: pass 8/8   replayed=1   plan: llm:gemini/gemma-4-31b-it   run: <run_id>
+ERP count: 1
 ```
+
+`<run_id>` is random per run, as is everything else in the transcript. `plan: llm:<provider>/<model>`
+is read back off the router after the call — it is evidence, not a label we printed ourselves. Open
+the page instead (`python3 -m src.ui.app --port 0` — it has no offline mode, it asks the model on
+every run) and the badge reads `llm · gemini/gemma-4-31b-it`, or names the reason it fell back.
+
+**Timing — read this before you start the clock.** The default Gemini model is `gemma-4-31b-it`
+and it is slow: a ~1.3k-token manifest prompt in, **~30–60 s per call** at `temperature: 0`. The
+demo's second run re-plans on the resume, so budget a couple of minutes for the cycle, not seconds.
+Set `GEMINI_MODEL=gemini-2.5-flash` for the same plan from the same schema several times faster —
+worth doing if you are recording anything.
+
+The model is never asked to know the future: the posting step names its values as
+`{{s1.latest.amount}}` / `{{s1.latest.due_date}}` and the executor resolves them out of the invoice
+the read step actually found. The ERP row is therefore the seeded invoice byte for byte
+(`ACME SUPPLY CO. | CX-2024-0912 | 4820.00 | USD | 2024-10-12`). Nothing in that row was written by
+a model.
 
 Keys are read in numeric order (`GEMINI_API_KEY`, then `_2`, `_3`, …) and used round-robin, so
 N keys raise the rate-limit ceiling N-fold. A key that answers `429` or `5xx` is put into a
@@ -530,22 +554,38 @@ short cooldown and the next key serves the request; a bad key is skipped the sam
 ever reaches a log, an event, or an error message** — the router replaces every key it holds
 with `[REDACTED]` before anything is written.
 
-Two honest caveats, both measured on a real key:
+Three honest caveats, all measured on a real key:
 
-1. If Gemini's tool-calling layer refuses the strict plan schema, the run does **not** break: it
-   prints `plan: heuristic(fallback: PlannerError: LLM returned no tool call)` and completes with
-   the same verified verdict. Degradation is the designed behaviour, not a silent pass.
-2. `python3 -m src.cli.main run --task …` (without `demo`) only attempts the LLM path when
-   `OPENAI_API_KEY` is set, because that check predates multi-key routing. Use
-   `demo … --llm` to exercise Gemini keys.
+1. **It degrades, it does not break.** No key, an exhausted free-tier quota (`429`), a refused key
+   (`400`), or an answer that is not a valid plan → the run prints
+   `plan: heuristic(fallback: <reason>)` and completes with the same verified verdict. Degradation
+   is the designed behaviour, not a silent pass, and the reason is always on the line.
+2. **Gemini needed one schema change to accept this repo's plan.** Its OpenAI-compatible endpoint
+   rejected the strict schema outright — `function_call_filter: MALFORMED_FUNCTION_CALL`,
+   `completion_tokens: 0`, with and without `strict: true` — and the one key that had to go was
+   `title`, the field pydantic puts on every model. The router now sends Gemini a profile with only
+   `title` removed, `strict: true` still set; an OpenAI endpoint receives the tool byte-identical.
+   If you ever see the fallback again, read the reason before assuming the model refused the task:
+   a free-tier `429` looks the same from the outside.
+3. **The compat endpoint 500s intermittently** — roughly one request in three on `gemma-4-31b-it`.
+   With a single key the router retries in place (the same request, immediately), which is why
+   repeated `--llm` runs are stable; with two or more keys it fails over instead.
 
-Verify the rotation logic without any key at all — it is fully offline:
+Verify the rotation and the schema profile without any key at all — both are fully offline:
 
 ```bash
-python3 -m pytest tests/test_llm_router_keys.py -q     # 12 passed
+python3 -m pytest tests/test_llm_router_keys.py -q         # 12 passed — rotation, cooldowns, redaction
+python3 -m pytest tests/test_llm_gemini_planning.py -q    # 16 passed — the google profile, temp: 0,
+                                                          # plan_source, fallback, {{s1.latest.*}} refs
 ```
 
-- [ ] step 13 (optional): `plan: llm` with a key, or the documented fallback message
+Also still open, so you are not surprised by it: `python3 -m src.cli.main run --task …` (without
+`demo`) only attempts the LLM path when `OPENAI_API_KEY` is set — that check predates multi-key
+routing (`prompts/phase-05-demo-ux/FIX-2.md`, not yet applied; `src/cli/main.py:508`). Use
+`demo … --llm` or the page to exercise Gemini keys.
+
+- [ ] step 13 (optional): `plan: llm:<provider>/<model>` with a key, or the documented fallback
+      message with its reason — and the ERP row still matches the seeded invoice
 
 ---
 
@@ -566,7 +606,8 @@ python3 -m pytest tests/test_llm_router_keys.py -q     # 12 passed
 
 | what you see | why | what it means |
 |---|---|---|
-| `plan: heuristic(fallback: …)` with `--llm` | Gemini's OpenAI-compatible tool-calling layer refused the strict plan schema (`function_call_filter: MALFORMED_FUNCTION_CALL`), seen with and without `strict: true` | the run still passes; live LLM planning needs a schema Gemini accepts (open item) |
+| `plan: heuristic(fallback: …)` with `--llm` | no usable key (none exported, a `400`-refused key, or a free-tier `429`) — earlier builds also hit Gemini's `MALFORMED_FUNCTION_CALL` on the strict schema, which is now fixed by the title-free google profile (step 13) | the run still passes; read the reason in the message: `no usable LLM key` means this machine, `PlannerError` means the endpoint refused the schema |
+| `--llm` is slow, not broken | the default Gemini model `gemma-4-31b-it` takes ~30–60 s per call at `temperature: 0`, and resuming re-plans | budget a couple of minutes for the two runs, or set `GEMINI_MODEL=gemini-2.5-flash` |
 | `seed … newest = CX-2024-0912`, and the seeded `.txt` invoice never appears | the offline planner's find step globs `*.pdf` | stated limit in the README; `invoice_find_latest` parses the `.txt` fine when asked directly |
 | `runs dir ok …/centralign/runs` created by doctor | doctor checks that a run directory is writable | harmless; the demo uses `/tmp` |
 | `sim ERP note … not running at http://127.0.0.1:8901` | nothing is listening on the conventional port | by design; the demo starts its own on a free port |
