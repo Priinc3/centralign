@@ -1,0 +1,40 @@
+{
+  "company": "Company X",
+  "latest": {
+    "file": "INV-X-2024-0912-acme.pdf",
+    "vendor": "ACME SUPPLY CO.",
+    "company": "Company X",
+    "invoice_number": "CX-2024-0912",
+    "issued": "2024-09-12",
+    "due": "2024-10-12",
+    "amount": "4820.00",
+    "currency": "USD"
+  },
+  "candidates": [
+    {
+      "file": "INV-X-2024-0912-acme.pdf",
+      "company": "Company X",
+      "issued": "2024-09-12",
+      "due": "2024-10-12",
+      "amount": "4820.00"
+    },
+    {
+      "file": "INV-X-2024-0703-acme.pdf",
+      "company": "Company X",
+      "issued": "2024-07-03",
+      "due": "2024-08-02",
+      "amount": "480.00"
+    },
+    {
+      "file": "INV-Y-2024-0805-other.txt",
+      "company": "Company Y",
+      "issued": "2024-08-05",
+      "due": "2024-09-04",
+      "amount": "9999.99"
+    }
+  ],
+  "distractors": {
+    "same_company_older": "INV-X-2024-0703-acme.pdf",
+    "wrong_company_newer": "INV-Y-2024-0805-other.txt"
+  }
+}

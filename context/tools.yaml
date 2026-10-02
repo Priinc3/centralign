@@ -1,0 +1,20 @@
+# Registry mirror of the frozen contract (src/contracts/tools.py ToolManifest) — policy-side copy.
+# risk must be one of the contract RISK_TIERS; amount_scoped means "takes an amount, so the gate needs it".
+version: 1
+updated: 2026-10-02
+
+tools:
+  invoice.parse:
+    risk: read
+    amount_scoped: false
+  browser.fetch:
+    risk: read
+    amount_scoped: false
+    needs_domain: true
+  files.write:
+    risk: write
+    amount_scoped: false
+  erp.post:
+    risk: write
+    amount_scoped: true
+    needs_domain: false

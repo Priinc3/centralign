@@ -1,0 +1,24 @@
+# Company context — what the operator is employed by. Placeholders only, no secrets.
+version: 1
+updated: 2026-10-02
+
+company:
+  id: company_x
+  name: Company X
+
+sources:
+  - name: invoice_portal
+    type: web
+    url: https://example.com/company-x/invoices   # placeholder host, real value goes in site config
+  - name: shared_drive
+    type: filesystem
+    path: data/seed/invoices
+
+erp:
+  endpoint: http://127.0.0.1:8901/invoices           # sim ERP (phase 02); no creds here
+  auth_env: ERP_API_KEY                              # secret read from env, never written to YAML
+  idempotency_header: Idempotency-Key
+
+approval:
+  amount_ceiling: 1000000.0    # above this the gate denies; at/below it may ask a human
+  queue: data/gate.jsonl       # file-based approval queue + decision audit log

@@ -1,0 +1,18 @@
+# Runtime deps — pinned to the versions the 115 tests (116 collected, 1 needs playwright) and the demo were run against.
+# Everything else is Python 3.11+ stdlib (sqlite3, http.server, argparse, re, json).
+#
+#   python3 -m pip install -r requirements.txt
+#
+# The demo needs NONE of these to produce a verified pass: `bash demo/run.sh` plans
+# heuristically, stores state in sqlite3, and posts to a local sim ERP. They matter for
+# the LLM planner and the test suite.
+
+openai==2.24.0        # LLM planner only; absent or unkeyed -> plan: heuristic, never an error
+pydantic==2.13.4      # frozen contracts (ToolManifest, Event, Verdict) + settings
+PyYAML==6.0.3         # context/*.yaml: company, policies (allowlist, ceilings, PII rules)
+pytest==9.1.1         # the test suite: python3 -m pytest tests/ -q
+
+# Optional — the browser tool only (src/tools/browser_tool.py). The demo never touches it,
+# and `python3 -m src.cli.main doctor` reports it as a note, not a failure. Unpinned on purpose:
+# nothing in the suite imports it, so there is no version this repo has proven.
+#   pip install playwright && python3 -m playwright install chromium

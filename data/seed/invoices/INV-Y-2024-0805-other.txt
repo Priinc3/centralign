@@ -1,0 +1,9 @@
+GLOBEX TRADING  (company: Company Y)
+INVOICE
+Invoice Number: GY-2024-0805
+Invoice Date: 2024-08-05
+Due Date: 2024-09-04
+
+Consulting retainer          1    9999.99     9999.99
+
+Amount Due: USD 9,999.99
